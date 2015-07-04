@@ -52,14 +52,19 @@ GLuint LinkProgram(std::vector<GLuint> a_shaders)
   return program;
 }
 
+void onResize(GLFWwindow* a_window, int a_width, int a_height)
+{
+  glViewport(0, 0, a_width, a_height);
+}
+
 int main()
 {
-  static const int width  = 1024;
-  static const int height = 768;
+  static const int width  = 512;
+  static const int height = 512;
   static const int scale  = 1;
 
   static const int nNeurons = 16;  // Neurons per layer
-  static const int nHidden  = 8;   // Number of hidden layers
+  static const int nLayers  = 10;  // Number of layers
 
   BrainGpu brain;
 
@@ -80,7 +85,7 @@ int main()
   }
 
   glfwMakeContextCurrent(window);
-
+  glfwSetWindowSizeCallback(window, onResize);
 
   // Load extensions with glad
   if (!gladLoadGL()) {
@@ -139,9 +144,9 @@ void main(void) {
   glUseProgram(renderProgram);
   error = glGetError();
   // Set up the compute shader program
-  const char* compShaderSrc = R"(#version 440
-const uint nNeurons = 16;  // Neurons per layer
-const uint nHidden  =  8;  // Number of hidden layers
+  const char compShaderFmt[] = R"(#version 440
+const uint nNeurons = %i;
+const uint nLayers  = %i;
 layout(binding = 0) uniform writeonly image2D destTex;
 uniform float biasA, biasB, biasC, biasD;
 layout(binding = 0) buffer nn { float neuralNet[]; };
@@ -176,42 +181,42 @@ void main() {
 
   for (int i = 0; i < 16; i++)
     scratchA[i] = 0.0;
-  scratchA[0] = pos.x * 2.0 - 1.0;
-  scratchA[1] = pos.y * 2.0 - 1.0;
+  scratchA[0] = pos.x * 4.0 - 2.0;
+  scratchA[1] = pos.y * 4.0 - 2.0;
   scratchA[2] = biasA;
   scratchA[3] = biasB;
   scratchA[4] = biasC;
   scratchA[5] = biasD;
-  multiply(0);
-  arr_tanh();
 
-  for (int i = 1; i <= nHidden; i++) {
+  for (int i = 0; i < nLayers-1; i++) {
     multiply(i);
     arr_tanh();
   }
 
-  multiply(nHidden+1);
+  multiply(nLayers-1);
   arr_sigmoid();
 
   vec4 color = vec4(scratchA[0], scratchA[1], scratchA[2], 1.0);
   imageStore(destTex, ivec2(gl_GlobalInvocationID.xy), color);
 })";
+  char compShaderSrc[sizeof(compShaderFmt)+32];
+  sprintf_s(compShaderSrc, compShaderFmt, nNeurons, nLayers);
   GLuint compShader  = CompileShader(compShaderSrc, GL_COMPUTE_SHADER);
   GLuint compProgram = LinkProgram({ compShader });
   glUseProgram(compProgram);
   glUniform1ui(glGetUniformLocation(compProgram, "nNeurons"), nNeurons);
-  glUniform1ui(glGetUniformLocation(compProgram, "nHidden"),  nHidden);
+  glUniform1ui(glGetUniformLocation(compProgram, "nLayers"),  nLayers);
   error = glGetError();
   // Set up the neural net buffer
   GLuint neuralNetBuf;
   glGenBuffers(1, &neuralNetBuf);
   {
-    const int totalSize = nNeurons * nNeurons * (nHidden + 2);  // Reserve two extra layers for input and output
+    const int totalSize = nNeurons * nNeurons * nLayers;
     std::random_device rand;
     std::uniform_real_distribution<float> dist(-1, 1);
     std::array<float, totalSize> temp;
     for (int i = 0; i < totalSize; i++)
-      temp[i] = dist(rand);
+      temp[i] = dist(rand) * 1.1f;
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neuralNetBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * totalSize, temp.data(), GL_STATIC_DRAW);
@@ -220,17 +225,17 @@ void main() {
   error = glGetError();
 
   // Main loop
-  float bias = 0;
   while (!glfwWindowShouldClose(window))
   {
+    double time = glfwGetTime() * 0.05;
+
     glUseProgram(compProgram);
-    glUniform1f(glGetUniformLocation(compProgram, "biasA"), (float)sin(0.7*bias+3.1));
-    glUniform1f(glGetUniformLocation(compProgram, "biasB"), (float)cos(2.1*bias+4.1));
-    glUniform1f(glGetUniformLocation(compProgram, "biasC"), (float)cos(7.9*bias+5.9));
-    glUniform1f(glGetUniformLocation(compProgram, "biasD"), (float)cos(3.4*bias+2.6));
+    glUniform1f(glGetUniformLocation(compProgram, "biasA"), (float)sin(0.7*time+3.1));
+    glUniform1f(glGetUniformLocation(compProgram, "biasB"), (float)cos(2.1*time+4.1));
+    glUniform1f(glGetUniformLocation(compProgram, "biasC"), (float)cos(7.9*time+5.9));
+    glUniform1f(glGetUniformLocation(compProgram, "biasD"), (float)cos(3.4*time+2.6));
     glDispatchCompute(width / 16, height / 16, 1);
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
-    bias += 0.001f;
 
     glUseProgram(renderProgram);
     glUniform1i(glGetUniformLocation(renderProgram, "uTexture"), 0);
@@ -241,8 +246,6 @@ void main() {
     glfwPollEvents();
   }
 
-
-  // Time to die.
   glfwTerminate();
   return 0;
 }
