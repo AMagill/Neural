@@ -59,12 +59,13 @@ void onResize(GLFWwindow* a_window, int a_width, int a_height)
 
 int main()
 {
-  static const int width  = 512;
-  static const int height = 512;
-  static const int scale  = 1;
+  static const int winWidth  = 768; // Initial window size
+  static const int winHeight = 768;
 
-  static const int nNeurons = 16;  // Neurons per layer
-  static const int nLayers  = 10;  // Number of layers
+  static const int width     = 256; // Size of the image produced
+  static const int height    = 256;
+  static const int nNeurons  = 16;  // Neurons per layer
+  static const int nLayers   = 10;  // Number of layers
 
   BrainGpu brain;
 
@@ -74,12 +75,13 @@ int main()
 
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
-  //glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-  //glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
 
-  GLFWwindow* window = glfwCreateWindow(width*scale, height*scale, "Hello World", NULL, NULL);
+  GLFWwindow* window = glfwCreateWindow(winWidth, winHeight, "Neural", NULL, NULL);
   if (!window)
   {
+    printf("Failed to create OpenGL context\n");
     glfwTerminate();
     return -1;
   }
@@ -89,15 +91,13 @@ int main()
 
   // Load extensions with glad
   if (!gladLoadGL()) {
-    printf("Something went wrong!\n");
+    printf("Failed to load OpenGL extensions\n");
     return -1;
   }
 
   GLuint error;
   error = glGetError();
 
-  // Set up OpenGL base state
-  glClearColor(1.0f, 1.0f, 0.0f, 0.0f);
   // Set up the output image texture
   GLuint imageTex;
   glGenTextures(1, &imageTex);
@@ -108,7 +108,7 @@ int main()
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
-  // Set up the quad geometry
+  // Set up the FSQ geometry
   GLfloat quad[] = { 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f, -1.0f, 1.0f };
   GLuint quadVBO;
   glGenBuffers(1, &quadVBO);
@@ -136,7 +136,6 @@ out vec4 oFragColor;
 layout(binding = 0) uniform sampler2D uTexture;
 void main(void) {
   oFragColor = vec4(texture2D(uTexture, pos).rgb, 1.0);
-  //oFragColor = vec4(1.0, 0.0, 0.0, 1.0);
 })";
   GLuint vertShader = CompileShader(vertShaderSrc, GL_VERTEX_SHADER);
   GLuint fragShader = CompileShader(fragShaderSrc, GL_FRAGMENT_SHADER);
@@ -147,8 +146,11 @@ void main(void) {
   const char compShaderFmt[] = R"(#version 440
 const uint nNeurons = %i;
 const uint nLayers  = %i;
-layout(binding = 0) uniform writeonly image2D destTex;
-uniform float biasA, biasB, biasC, biasD;
+const float freq[]  = {8.6, 7.5, 3.0, 9.8, 6.7, 5.3, 0.9, 8.6}; // Arbitrarily selected values
+const float phase[] = {3.1, 4.1, 5.9, 2.6, 5.3, 5.8, 9.8, 1.2};
+const float speed   = 0.05;
+layout(binding = 0) uniform writeonly image2D uDestTex;
+uniform float uTime;
 layout(binding = 0) buffer nn { float neuralNet[]; };
 layout (local_size_x = 16, local_size_y = 16) in;
 float scratchA[nNeurons];
@@ -179,14 +181,12 @@ void arr_sigmoid() {
 void main() {
   vec3 pos = vec3(gl_GlobalInvocationID) / (gl_NumWorkGroups * gl_WorkGroupSize);
 
-  for (int i = 0; i < 16; i++)
-    scratchA[i] = 0.0;
   scratchA[0] = pos.x * 4.0 - 2.0;
   scratchA[1] = pos.y * 4.0 - 2.0;
-  scratchA[2] = biasA;
-  scratchA[3] = biasB;
-  scratchA[4] = biasC;
-  scratchA[5] = biasD;
+  for (int i = 0; i < 8; i++)
+    scratchA[i+2] = sin(uTime*speed*freq[i]+phase[i]);
+  for (int i = 10; i < nNeurons; i++)
+    scratchA[i] = 0.0;
 
   for (int i = 0; i < nLayers-1; i++) {
     multiply(i);
@@ -197,15 +197,13 @@ void main() {
   arr_sigmoid();
 
   vec4 color = vec4(scratchA[0], scratchA[1], scratchA[2], 1.0);
-  imageStore(destTex, ivec2(gl_GlobalInvocationID.xy), color);
+  imageStore(uDestTex, ivec2(gl_GlobalInvocationID.xy), color);
 })";
   char compShaderSrc[sizeof(compShaderFmt)+32];
   sprintf_s(compShaderSrc, compShaderFmt, nNeurons, nLayers);
   GLuint compShader  = CompileShader(compShaderSrc, GL_COMPUTE_SHADER);
   GLuint compProgram = LinkProgram({ compShader });
   glUseProgram(compProgram);
-  glUniform1ui(glGetUniformLocation(compProgram, "nNeurons"), nNeurons);
-  glUniform1ui(glGetUniformLocation(compProgram, "nLayers"),  nLayers);
   error = glGetError();
   // Set up the neural net buffer
   GLuint neuralNetBuf;
@@ -227,19 +225,14 @@ void main() {
   // Main loop
   while (!glfwWindowShouldClose(window))
   {
-    double time = glfwGetTime() * 0.05;
-
+    // Generate the image in the compute shader
     glUseProgram(compProgram);
-    glUniform1f(glGetUniformLocation(compProgram, "biasA"), (float)sin(0.7*time+3.1));
-    glUniform1f(glGetUniformLocation(compProgram, "biasB"), (float)cos(2.1*time+4.1));
-    glUniform1f(glGetUniformLocation(compProgram, "biasC"), (float)cos(7.9*time+5.9));
-    glUniform1f(glGetUniformLocation(compProgram, "biasD"), (float)cos(3.4*time+2.6));
+    glUniform1f(glGetUniformLocation(compProgram, "uTime"), (float)glfwGetTime());
     glDispatchCompute(width / 16, height / 16, 1);
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
 
+    // Draw the image to screen
     glUseProgram(renderProgram);
-    glUniform1i(glGetUniformLocation(renderProgram, "uTexture"), 0);
-    //glClear(GL_COLOR_BUFFER_BIT);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     glfwSwapBuffers(window);
@@ -248,4 +241,10 @@ void main() {
 
   glfwTerminate();
   return 0;
+}
+
+// Starting point for the Windows subsystem, so we can disable the console
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+  main();
 }
