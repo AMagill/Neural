@@ -4,7 +4,6 @@
 #include <random>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-#include "brainGpu.h"
 
 GLuint CompileShader(const char* a_src, GLuint a_type)
 {
@@ -66,8 +65,6 @@ int main()
   static const int height    = 256;
   static const int nNeurons  = 16;  // Neurons per layer
   static const int nLayers   = 10;  // Number of layers
-
-  BrainGpu brain;
 
   // Init OpenGL and make a window via GLFW
   if (!glfwInit())
@@ -214,7 +211,7 @@ void main() {
     std::uniform_real_distribution<float> dist(-1, 1);
     std::array<float, totalSize> temp;
     for (int i = 0; i < totalSize; i++)
-      temp[i] = dist(rand) * 1.1f;
+      temp[i] = dist(rand);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neuralNetBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * totalSize, temp.data(), GL_STATIC_DRAW);
@@ -237,6 +234,8 @@ void main() {
 
     glfwSwapBuffers(window);
     glfwPollEvents();
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE))
+      break;
   }
 
   glfwTerminate();

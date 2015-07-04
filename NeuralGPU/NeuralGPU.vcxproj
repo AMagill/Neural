@@ -86,11 +86,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\glad\src\glad.c" />
-    <ClCompile Include="BrainGpu.cpp" />
     <ClCompile Include="main.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="BrainGpu.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
