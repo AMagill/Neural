@@ -54,13 +54,11 @@ GLuint LinkProgram(std::vector<GLuint> a_shaders)
 
 int main()
 {
-  static const int width  = 64;
-  static const int height = 64;
-  static const int scale  = 8;
+  static const int width  = 1024;
+  static const int height = 768;
+  static const int scale  = 1;
 
   static const int nNeurons = 16;  // Neurons per layer
-  static const int nInputs  = 3;   // Input channels  (x, y, ...)
-  static const int nOutputs = 3;   // Output channels (r, g, b)
   static const int nHidden  = 8;   // Number of hidden layers
 
   BrainGpu brain;
@@ -125,7 +123,7 @@ in vec2 iPosition;
 out vec2 pos;
 void main(void) {
   pos = iPosition * 0.5 + 0.5;
-  gl_Position = vec4(iPosition*0.9, 0.0, 1.0);
+  gl_Position = vec4(iPosition, 0.0, 1.0);
 })";
   const char* fragShaderSrc = R"(#version 440
 in vec2 pos;
@@ -143,21 +141,20 @@ void main(void) {
   // Set up the compute shader program
   const char* compShaderSrc = R"(#version 440
 const uint nNeurons = 16;  // Neurons per layer
-const uint nInputs  =  3;  // Input channels  (x, y, ...)
-const uint nOutputs =  3;  // Output channels (r, g, b)
 const uint nHidden  =  8;  // Number of hidden layers
 layout(binding = 0) uniform writeonly image2D destTex;
-layout(binding = 0, std140) buffer nn { float neuralNet[]; };
+uniform float biasA, biasB, biasC, biasD;
+layout(binding = 0) buffer nn { float neuralNet[]; };
 layout (local_size_x = 16, local_size_y = 16) in;
 float scratchA[nNeurons];
 float scratchB[nNeurons];
 
-void multiply(uint layer, uint width, uint height) {
+void multiply(uint layer) {
   uint los = layer * nNeurons * nNeurons;
   for (uint x = 0; x < nNeurons; x++) {
     float dot = 0.0;
     for (uint y = 0; y < nNeurons; y++) {
-      float cell = neuralNet[los + (height*x) + y];
+      float cell = neuralNet[los + (nNeurons*x) + y];
       dot += cell * scratchA[y];
     }
     scratchB[x] = dot;
@@ -176,31 +173,33 @@ void arr_sigmoid() {
 
 void main() {
   vec3 pos = vec3(gl_GlobalInvocationID) / (gl_NumWorkGroups * gl_WorkGroupSize);
-  scratchA[0] = pos.x;
-  scratchA[1] = pos.y;
-  scratchA[2] = 1.0;
-  multiply(0, nNeurons, nInputs);
+
+  for (int i = 0; i < 16; i++)
+    scratchA[i] = 0.0;
+  scratchA[0] = pos.x * 2.0 - 1.0;
+  scratchA[1] = pos.y * 2.0 - 1.0;
+  scratchA[2] = biasA;
+  scratchA[3] = biasB;
+  scratchA[4] = biasC;
+  scratchA[5] = biasD;
+  multiply(0);
   arr_tanh();
-  
+
   for (int i = 1; i <= nHidden; i++) {
-    multiply(i, nNeurons, nNeurons);
+    multiply(i);
     arr_tanh();
   }
 
-  multiply(nHidden+1, nOutputs, nNeurons);
+  multiply(nHidden+1);
   arr_sigmoid();
 
   vec4 color = vec4(scratchA[0], scratchA[1], scratchA[2], 1.0);
-
-  color = vec4(scratchA[int(pos.x*nNeurons)]);
   imageStore(destTex, ivec2(gl_GlobalInvocationID.xy), color);
 })";
   GLuint compShader  = CompileShader(compShaderSrc, GL_COMPUTE_SHADER);
   GLuint compProgram = LinkProgram({ compShader });
   glUseProgram(compProgram);
   glUniform1ui(glGetUniformLocation(compProgram, "nNeurons"), nNeurons);
-  glUniform1ui(glGetUniformLocation(compProgram, "nInputs"),  nInputs);
-  glUniform1ui(glGetUniformLocation(compProgram, "nOutputs"), nOutputs);
   glUniform1ui(glGetUniformLocation(compProgram, "nHidden"),  nHidden);
   error = glGetError();
   // Set up the neural net buffer
@@ -225,15 +224,17 @@ void main() {
   while (!glfwWindowShouldClose(window))
   {
     glUseProgram(compProgram);
-    glUniform1f(glGetUniformLocation(compProgram, "roll"), bias);
-    glUniform1i(glGetUniformLocation(compProgram, "destTex"), 0);
+    glUniform1f(glGetUniformLocation(compProgram, "biasA"), (float)sin(0.7*bias+3.1));
+    glUniform1f(glGetUniformLocation(compProgram, "biasB"), (float)cos(2.1*bias+4.1));
+    glUniform1f(glGetUniformLocation(compProgram, "biasC"), (float)cos(7.9*bias+5.9));
+    glUniform1f(glGetUniformLocation(compProgram, "biasD"), (float)cos(3.4*bias+2.6));
     glDispatchCompute(width / 16, height / 16, 1);
     glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
-    bias += 0.01f;
+    bias += 0.001f;
 
     glUseProgram(renderProgram);
     glUniform1i(glGetUniformLocation(renderProgram, "uTexture"), 0);
-    glClear(GL_COLOR_BUFFER_BIT);
+    //glClear(GL_COLOR_BUFFER_BIT);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     glfwSwapBuffers(window);
