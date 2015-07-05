@@ -58,8 +58,8 @@ void onResize(GLFWwindow* a_window, int a_width, int a_height)
 
 int main()
 {
-  static const int winWidth  = 768; // Initial window size
-  static const int winHeight = 768;
+  static const int winWidth  = 256; // Initial window size
+  static const int winHeight = 256;
 
   static const int width     = 256; // Size of the image produced
   static const int height    = 256;
@@ -128,37 +128,26 @@ void main(void) {
   gl_Position = vec4(iPosition, 0.0, 1.0);
 })";
   const char* fragShaderSrc = R"(#version 440
-in vec2 pos;
-out vec4 oFragColor;
-layout(binding = 0) uniform sampler2D uTexture;
-void main(void) {
-  oFragColor = vec4(texture2D(uTexture, pos).rgb, 1.0);
-})";
-  GLuint vertShader = CompileShader(vertShaderSrc, GL_VERTEX_SHADER);
-  GLuint fragShader = CompileShader(fragShaderSrc, GL_FRAGMENT_SHADER);
-  GLuint renderProgram = LinkProgram({ vertShader, fragShader });
-  glUseProgram(renderProgram);
-  error = glGetError();
-  // Set up the compute shader program
-  const char compShaderFmt[] = R"(#version 440
-const uint nNeurons = %i;
-const uint nLayers  = %i;
+const uint nNeurons = 16;
+const uint nLayers  = 10;
 const float freq[]  = {8.6, 7.5, 3.0, 9.8, 6.7, 5.3, 0.9, 8.6}; // Arbitrarily selected values
 const float phase[] = {3.1, 4.1, 5.9, 2.6, 5.3, 5.8, 9.8, 1.2};
 const float speed   = 0.05;
-layout(binding = 0) uniform writeonly image2D uDestTex;
+
+in vec2 pos;
+out vec4 oFragColor;
+
+layout(binding = 0) uniform sampler3D uNeuralNet;
 uniform float uTime;
-layout(binding = 0) buffer nn { float neuralNet[]; };
-layout (local_size_x = 16, local_size_y = 16) in;
+
 float scratchA[nNeurons];
 float scratchB[nNeurons];
 
 void multiply(uint layer) {
-  uint los = layer * nNeurons * nNeurons;
   for (uint x = 0; x < nNeurons; x++) {
     float dot = 0.0;
     for (uint y = 0; y < nNeurons; y++) {
-      float cell = neuralNet[los + (nNeurons*x) + y];
+      float cell = texture(uNeuralNet, vec3(float(x)/nNeurons, float(y)/nNeurons, float(layer)/nLayers)).r * 2.0 - 1.0;
       dot += cell * scratchA[y];
     }
     scratchB[x] = dot;
@@ -175,9 +164,7 @@ void arr_sigmoid() {
     scratchA[i] = 1.0 / (1.0 + exp(-scratchB[i]));
 }
 
-void main() {
-  vec3 pos = vec3(gl_GlobalInvocationID) / (gl_NumWorkGroups * gl_WorkGroupSize);
-
+void main(void) {
   scratchA[0] = pos.x * 4.0 - 2.0;
   scratchA[1] = pos.y * 4.0 - 2.0;
   for (int i = 0; i < 8; i++)
@@ -193,43 +180,44 @@ void main() {
   multiply(nLayers-1);
   arr_sigmoid();
 
-  vec4 color = vec4(scratchA[0], scratchA[1], scratchA[2], 1.0);
-  imageStore(uDestTex, ivec2(gl_GlobalInvocationID.xy), color);
+  oFragColor = vec4(scratchA[0], scratchA[1], scratchA[2], 1.0);
+  //oFragColor = vec4(vec3(scratchA[int(pos.x*nNeurons)]) * 0.5 + 0.5, 1.0);
+  //uint foo = uint(pos.x * 16.0);
+  //oFragColor = vec4(vec3(float(foo)/uint(16)), 1.0);
+  //oFragColor = vec4(texture(uNeuralNet, vec3(pos.xy, fract(uTime*0.5))).rrr, 1.0);
 })";
-  char compShaderSrc[sizeof(compShaderFmt)+32];
-  sprintf_s(compShaderSrc, compShaderFmt, nNeurons, nLayers);
-  GLuint compShader  = CompileShader(compShaderSrc, GL_COMPUTE_SHADER);
-  GLuint compProgram = LinkProgram({ compShader });
-  glUseProgram(compProgram);
+  GLuint vertShader = CompileShader(vertShaderSrc, GL_VERTEX_SHADER);
+  GLuint fragShader = CompileShader(fragShaderSrc, GL_FRAGMENT_SHADER);
+  GLuint renderProgram = LinkProgram({ vertShader, fragShader });
+  glUseProgram(renderProgram);
   error = glGetError();
   // Set up the neural net buffer
-  GLuint neuralNetBuf;
-  glGenBuffers(1, &neuralNetBuf);
+  GLuint neuralNetTex;
+  glGenTextures(1, &neuralNetTex);
+  glBindTexture(GL_TEXTURE_3D, neuralNetTex);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
   {
     const int totalSize = nNeurons * nNeurons * nLayers;
     std::random_device rand;
     std::uniform_real_distribution<float> dist(-1, 1);
     std::array<float, totalSize> temp;
     for (int i = 0; i < totalSize; i++)
-      temp[i] = dist(rand);
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neuralNetBuf);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * totalSize, temp.data(), GL_STATIC_DRAW);
+      temp[i] = dist(rand) * 0.5 + 0.5;
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RED, nNeurons, nNeurons, nLayers, 0, GL_RED, GL_FLOAT, temp.data());
   }
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, neuralNetBuf);
   error = glGetError();
-
+  if (error)
+    return 0;
+  
   // Main loop
   while (!glfwWindowShouldClose(window))
   {
-    // Generate the image in the compute shader
-    glUseProgram(compProgram);
-    glUniform1f(glGetUniformLocation(compProgram, "uTime"), (float)glfwGetTime());
-    glDispatchCompute(width / 16, height / 16, 1);
-    glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
-
     // Draw the image to screen
     glUseProgram(renderProgram);
+    glUniform1f(glGetUniformLocation(renderProgram, "uTime"), (float)glfwGetTime());
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     glfwSwapBuffers(window);
