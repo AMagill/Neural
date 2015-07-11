@@ -70,10 +70,10 @@ int main()
   if (!glfwInit())
     return -1;
 
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
-  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+  //glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+  //glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+  //glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+  //glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
 
   GLFWwindow* window = glfwCreateWindow(winWidth, winHeight, "Neural", NULL, NULL);
   if (!window)
@@ -83,6 +83,7 @@ int main()
     return -1;
   }
 
+  const char* foo = glfwGetVersionString();
   glfwMakeContextCurrent(window);
   glfwSetWindowSizeCallback(window, onResize);
 
@@ -120,33 +121,31 @@ int main()
   glEnableVertexAttribArray(0);
   error = glGetError();
   // Set up the render shaders
-  const char* vertShaderSrc = R"(#version 440
+  const char* vertShaderSrc = R"(#version 130
 in vec2 iPosition;
 out vec2 pos;
 void main(void) {
   pos = iPosition * 0.5 + 0.5;
   gl_Position = vec4(iPosition, 0.0, 1.0);
 })";
-  const char* fragShaderSrc = R"(#version 440
-const uint nNeurons = 16;
-const uint nLayers  = 10;
-const float freq[]  = {8.6, 7.5, 3.0, 9.8, 6.7, 5.3, 0.9, 8.6}; // Arbitrarily selected values
-const float phase[] = {3.1, 4.1, 5.9, 2.6, 5.3, 5.8, 9.8, 1.2};
+  const char* fragShaderSrc = R"(#version 130
+const int nNeurons = 16;
+const int nLayers  = 10;
 const float speed   = 0.05;
 
 in vec2 pos;
 out vec4 oFragColor;
 
-layout(binding = 0) uniform sampler3D uNeuralNet;
+uniform sampler3D uNeuralNet;
 uniform float uTime;
 
 float scratchA[nNeurons];
 float scratchB[nNeurons];
 
-void multiply(uint layer) {
-  for (uint x = 0; x < nNeurons; x++) {
+void multiply(int layer) {
+  for (int x = 0; x < nNeurons; x++) {
     float dot = 0.0;
-    for (uint y = 0; y < nNeurons; y++) {
+    for (int y = 0; y < nNeurons; y++) {
       float cell = texture(uNeuralNet, vec3(float(x)/nNeurons, float(y)/nNeurons, float(layer)/nLayers)).r * 2.0 - 1.0;
       dot += cell * scratchA[y];
     }
@@ -155,20 +154,26 @@ void multiply(uint layer) {
 }
 
 void arr_tanh() {
-  for (uint i = 0; i < nNeurons; i++)
+  for (int i = 0; i < nNeurons; i++)
     scratchA[i] = tanh(scratchB[i]);
 }
 
 void arr_sigmoid() {
-  for (uint i = 0; i < nNeurons; i++)
+  for (int i = 0; i < nNeurons; i++)
     scratchA[i] = 1.0 / (1.0 + exp(-scratchB[i]));
 }
 
 void main(void) {
   scratchA[0] = pos.x * 4.0 - 2.0;
   scratchA[1] = pos.y * 4.0 - 2.0;
-  for (int i = 0; i < 8; i++)
-    scratchA[i+2] = sin(uTime*speed*freq[i]+phase[i]);
+  scratchA[2] = sin(uTime*speed*8.6+3.1);  // Values arbitrarily chosen
+  scratchA[3] = sin(uTime*speed*7.5+4.1);
+  scratchA[4] = sin(uTime*speed*3.0+5.9);
+  scratchA[5] = sin(uTime*speed*9.8+2.6);
+  scratchA[6] = sin(uTime*speed*6.7+5.3);
+  scratchA[7] = sin(uTime*speed*5.3+5.8);
+  scratchA[8] = sin(uTime*speed*0.9+9.8);
+  scratchA[9] = sin(uTime*speed*8.6+1.2);
   for (int i = 10; i < nNeurons; i++)
     scratchA[i] = 0.0;
 
@@ -218,6 +223,7 @@ void main(void) {
     // Draw the image to screen
     glUseProgram(renderProgram);
     glUniform1f(glGetUniformLocation(renderProgram, "uTime"), (float)glfwGetTime());
+    glUniform1i(glGetUniformLocation(renderProgram, "uNeuralNet"), 0);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     glfwSwapBuffers(window);
